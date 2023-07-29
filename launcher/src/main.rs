@@ -12,6 +12,9 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{fs, io};
 use subprocess::{ExitStatus, Popen, PopenConfig, PopenError, Redirection};
+use serde_json::json;
+
+use reqwest::blocking::Client;
 
 mod env_runtime;
 
@@ -196,6 +199,14 @@ struct Args {
     /// for end users.
     #[clap(default_value = "20", long, env)]
     max_waiting_tokens: usize,
+
+    /// Register to controller ip
+    #[clap(default_value = "controller", long, env)]
+    controller_addr: String,
+
+    /// Register to controller port
+    #[clap(default_value = "8000", long, short, env)]
+    controller_port: u16,
 
     /// The IP address to listen on
     #[clap(default_value = "0.0.0.0", long, env)]
@@ -987,6 +998,27 @@ fn spawn_webserver(
     Ok(webserver)
 }
 
+fn register_to_controller(args: &Args) -> Result<(), reqwest::Error> {
+    tracing::info!("Register to controller");
+
+    let url = format!("http://{}:{}/register_worker", args.controller_addr.to_string(), args.controller_port.to_string());
+
+    let data = json!({
+        "model_name": args.model_id.to_string(),
+        "ip_address": args.hostname.to_string(),
+        "port": args.port.to_string()
+    });
+
+    let client = Client::new();
+    let response = client.post(&url).json(&data).send()?;
+
+    assert!(response.status().is_success());
+
+    Ok(())
+}
+
+
+
 fn main() -> Result<(), LauncherError> {
     // Pattern match configuration
     let args = Args::parse();
@@ -1003,6 +1035,10 @@ fn main() -> Result<(), LauncherError> {
     }
 
     tracing::info!("{:?}", args);
+
+    if let Err(err) = register_to_controller(&args) {
+        eprintln!("Failed to register to controller: {}", err);
+    }
 
     let num_shard = find_num_shards(args.sharded, args.num_shard);
     if num_shard > 1 {
